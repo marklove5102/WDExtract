@@ -1,8 +1,9 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>c:\test\nisbase.vdm -e</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>c:\test\mpavbase.extracted c:\test\mpavdlta.extracted -m</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+    <LocalDebuggerCommandArgumentsHistory>c:\test\mpasbase.vdm -e|c:\test\mpavbase.vdm -e|c:\test\mpavdlta.vdm|c:\test\mpasbase.extracted c:\test\mpasdlta.extracted -m|c:\test\mpavbase.extracted c:\test\mpavdlta.extracted -m|</LocalDebuggerCommandArgumentsHistory>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LocalDebuggerCommandArguments>

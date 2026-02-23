@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2019 - 2025
+*  (C) COPYRIGHT AUTHORS, 2019 - 2026
 *
 *  TITLE:       MPENGINE.H
 *
-*  VERSION:     1.10
+*  VERSION:     1.11
 *
-*  DATE:        16 Jun 2025
+*  DATE:        20 Feb 2026
 *
 *  MpEngine related structures and definitions.
 *
@@ -38,7 +38,7 @@ typedef struct _CDATA_HEADER {
     ULONG Length;             //0
     ULONG Unknown1;           //4
     union {                   //8
-        BYTE Data[1];
+        BYTE Data[ANYSIZE_ARRAY];
         ULONG Unknown2;
     } u1;
 } CDATA_HEADER, *PCDATA_HEADER;
@@ -47,7 +47,7 @@ typedef struct _CDATA_HEADER_NIS {
     ULONG Unknown0;             //0
     ULONG Unknown1;             //4
     BYTE Utf8Marker[3];         //8
-    BYTE Data[1];
+    BYTE Data[ANYSIZE_ARRAY];
 } CDATA_HEADER_NIS, *PCDATA_HEADER_NIS;
 
 typedef struct _CHUNK_HEAD {
@@ -82,13 +82,13 @@ typedef struct _CSIG_ENTRY {
     BYTE Type;
     BYTE SizeLow;
     WORD SizeHigh;
-    BYTE Data[1];
+    BYTE Data[ANYSIZE_ARRAY];
 } CSIG_ENTRY, * PCSIG_ENTRY;
 
 typedef struct _CDELTA_BLOB {
     DWORD Size;
     DWORD Checksum;
-    BYTE Data[1];
+    BYTE Data[ANYSIZE_ARRAY];
 } CDELTA_BLOB, * PCDELTA_BLOB;
 #pragma pack(pop)
 

@@ -75,4 +75,4 @@ No actual dumped/extracted/unpacked binary data included or will be included in 
 Uses ZLIB Data Compression Library (https://github.com/madler/zlib)
 
 # Authors
-(c) 2019 - 2025 WDEXTRACT Project
+(c) 2019 - 2026 WDEXTRACT Project

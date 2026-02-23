@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2019 - 2025
+*  (C) COPYRIGHT AUTHORS, 2019 - 2026
 *
 *  TITLE:       UTILS.H
 *
-*  VERSION:     1.11
+*  VERSION:     1.12
 *
-*  DATE:        03 Aug 2025
+*  DATE:        20 Feb 2026
 *
 *  Support routines header file.
 *
@@ -33,10 +33,27 @@ typedef struct _LANGANDCODEPAGE {
 #define CODEBLOB_OPEN               L"<CodeBlob>"
 #define CODEBLOB_CLOSE              L"</CodeBlob>"
 
-HANDLE FileOpen(LPCWSTR lpFileName, DWORD dwDesiredAccess);
-HANDLE FileCreate(LPCWSTR lpFileName);
-ULONG FileWrite(PBYTE InputBuffer, ULONG Size, HANDLE hFile);
-ULONG FileRead(PBYTE OutputBuffer, ULONG Size, HANDLE hFile);
+#define FileOpen(lpFileName, dwDesiredAccess) \
+    CreateFile((lpFileName), (dwDesiredAccess), FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL)
+
+#define FileCreate(lpFileName) \
+    CreateFile((lpFileName), GENERIC_WRITE | GENERIC_READ, 0, NULL, CREATE_ALWAYS, 0, NULL)
+
+static inline ULONG FileWrite(PBYTE InputBuffer, ULONG Size, HANDLE hFile)
+{
+    DWORD write = 0;
+    WriteFile(hFile, InputBuffer, Size, &write, NULL);
+    return write;
+}
+
+static inline ULONG FileRead(PBYTE OutputBuffer, ULONG Size, HANDLE hFile)
+{
+    DWORD read = 0;
+    if (!ReadFile(hFile, OutputBuffer, Size, &read, NULL))
+        return 0;
+    return read;
+}
+
 #define RtlOffsetToPointer(Base, Offset) ((PCHAR)( ((PCHAR)(Base)) + ((ULONG_PTR)(Offset)) ))
 
 #define GET_SIG_SIZE(entry) ((entry)->SizeLow | ((entry)->SizeHigh << 8))
@@ -85,7 +102,8 @@ BOOLEAN ZLibUnpack(
     _Out_ PULONG TotalBytesRead);
 
 PBYTE GetDeltaBlobSig(
-    _In_ PBYTE deltaData);
+    _In_ PBYTE deltaData,
+    _In_ DWORD deltaDataSize);
 
 ULONG ExtractCallback(
     _In_ LPWSTR CurrentDirectory,

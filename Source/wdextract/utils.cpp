@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2019 - 2025
+*  (C) COPYRIGHT AUTHORS, 2019 - 2026
 *
 *  TITLE:       UTILS.CPP
 *
-*  VERSION:     1.11
+*  VERSION:     1.12
 *
-*  DATE:        07 Aug 2025
+*  DATE:        20 Feb 2026
 *
 *  Program global support routines, ZLib, containers.
 *
@@ -24,40 +24,14 @@
 #include "zlib.h"
 
 #define ZLIB_CHUNK 16384
-unsigned char ZLib_in[ZLIB_CHUNK];
-unsigned char ZLib_out[ZLIB_CHUNK];
+__declspec(thread) static unsigned char ZLib_in[ZLIB_CHUNK];
+__declspec(thread) static unsigned char ZLib_out[ZLIB_CHUNK];
 
 #ifdef _M_IX86
 #pragma comment(lib, "zlib/lib/zlibwapi32.lib")
 #elif _M_AMD64
 #pragma comment(lib, "zlib/lib/zlibwapi64.lib")
 #endif
-
-HANDLE FileOpen(LPCWSTR lpFileName, DWORD dwDesiredAccess)
-{
-    return CreateFile(lpFileName, dwDesiredAccess, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
-}
-
-HANDLE FileCreate(LPCWSTR lpFileName)
-{
-    return CreateFile(lpFileName, GENERIC_WRITE | GENERIC_READ, 0, NULL, CREATE_ALWAYS, 0, NULL);
-}
-
-ULONG FileWrite(PBYTE InputBuffer, ULONG Size, HANDLE hFile)
-{
-    DWORD write = 0;
-    WriteFile(hFile, InputBuffer, Size, &write, NULL);
-    return write;
-}
-
-ULONG FileRead(PBYTE OutputBuffer, ULONG Size, HANDLE hFile)
-{
-    DWORD read = 0;
-    if (!ReadFile(hFile, OutputBuffer, Size, &read, NULL))
-        return 0;
-
-    return read;
-}
 
 /*
 * MapContainerFile
@@ -313,13 +287,6 @@ BOOLEAN ZLibUnpack(
 
     } while (ret != Z_STREAM_END);
 
-    if (ret != Z_STREAM_END) {
-        inflateEnd(&strm);
-        *TotalBytesWritten = totalBytesWritten;
-        *TotalBytesRead = CurrentPosition;
-        return FALSE;
-    }
-
     inflateEnd(&strm);
 
     *TotalBytesWritten = totalBytesWritten;
@@ -400,7 +367,11 @@ BOOLEAN GetImageSize(
 
     __try {
 
-        NtHeaders = (PIMAGE_NT_HEADERS)((PCHAR)ImageBase + ((PIMAGE_DOS_HEADER)ImageBase)->e_lfanew);
+        NtHeaders = ImageNtHeader(ImageBase);
+        if (NtHeaders == NULL) {
+            return FALSE;
+        }
+
         Machine = NtHeaders->FileHeader.Machine;
 
         Opt32 = (IMAGE_OPTIONAL_HEADER32*)&NtHeaders->OptionalHeader;
@@ -458,10 +429,9 @@ BOOLEAN IsValidImage(
         return FALSE;
 
     __try {
-        if (((PIMAGE_DOS_HEADER)ImageBase)->e_magic != IMAGE_DOS_SIGNATURE)
+        NtHeaders = ImageNtHeader(ImageBase);
+        if (NtHeaders == NULL)
             return FALSE;
-
-        NtHeaders = (PIMAGE_NT_HEADERS)((PCHAR)ImageBase + ((PIMAGE_DOS_HEADER)ImageBase)->e_lfanew);
         if (NtHeaders->Signature != IMAGE_NT_SIGNATURE)
             return FALSE;
 
@@ -595,13 +565,25 @@ BOOLEAN ExtractImageNameFromExport(
 *
 */
 PBYTE GetDeltaBlobSig(
-    _In_ PBYTE deltaData
+    _In_ PBYTE deltaData,
+    _In_ DWORD deltaDataSize
 )
 {
-    PCSIG_ENTRY entry = (PCSIG_ENTRY)deltaData;
-    DWORD sigSize = GET_SIG_SIZE(entry);
+    PCSIG_ENTRY entry;
+    DWORD sigSize;
+    SIZE_T offset;
 
-    return deltaData + sigSize + sizeof(entry->Type) + sizeof(entry->SizeLow) + sizeof(entry->SizeHigh);
+    if (!deltaData || deltaDataSize < sizeof(CSIG_ENTRY))
+        return NULL;
+
+    entry = (PCSIG_ENTRY)deltaData;
+    sigSize = GET_SIG_SIZE(entry);
+
+    offset = sigSize + sizeof(entry->Type) + sizeof(entry->SizeLow) + sizeof(entry->SizeHigh);
+    if (offset > deltaDataSize)
+        return NULL;
+
+    return deltaData + offset;
 }
 
 /*
@@ -622,7 +604,7 @@ ULONG ExtractCallback(
 {
     BOOLEAN FileNameAvailable;
     ULONG Result = ERROR_SUCCESS;
-    HANDLE FileHandle;
+    HANDLE FileHandle = INVALID_HANDLE_VALUE;
     WCHAR szImageName[MAX_PATH + 1];
     WCHAR ImageChunkFileName[MAX_FILENAME_BUFFER_LENGTH + 1];
     WCHAR ImageChunkFileName2[MAX_FILENAME_BUFFER_LENGTH + 1];
@@ -796,25 +778,27 @@ UINT ExtractDataXML_BruteForce(
                         CryptStringToBinary(OpenBlob, (DWORD)ChunkLength,
                             CRYPT_STRING_BASE64, NULL, (DWORD*)&cbBinary, NULL, NULL);
 
-                        pbBinary = (BYTE*)LocalAlloc(LMEM_ZEROINIT, cbBinary);
-                        if (pbBinary) {
+                        if (cbBinary) {
+                            pbBinary = (BYTE*)LocalAlloc(LMEM_ZEROINIT, cbBinary);
+                            if (pbBinary) {
 
-                            if (CryptStringToBinary(OpenBlob, (DWORD)ChunkLength,
-                                CRYPT_STRING_BASE64, pbBinary, &cbBinary, NULL, NULL))
-                            {
-                                wprintf_s(L"%s: Found image at position %08IX with size = %lu\r\n", __FUNCTIONW__,
-                                    (ULONG_PTR)OpenBlob,
-                                    ChunkLength);
+                                if (CryptStringToBinary(OpenBlob, (DWORD)ChunkLength,
+                                    CRYPT_STRING_BASE64, pbBinary, &cbBinary, NULL, NULL))
+                                {
+                                    wprintf_s(L"%s: Found image at position %08IX with size = %lu\r\n", __FUNCTIONW__,
+                                        (ULONG_PTR)OpenBlob,
+                                        ChunkLength);
 
-                                ULONG extractResult = ExtractCallback(szCurrentDirectory, pbBinary, cbBinary, ctr, TRUE);
-                                if (extractResult == ERROR_SUCCESS) {
-                                    ++ctr;
+                                    ULONG extractResult = ExtractCallback(szCurrentDirectory, pbBinary, cbBinary, ctr, TRUE);
+                                    if (extractResult == ERROR_SUCCESS) {
+                                        ++ctr;
+                                    }
+                                    else {
+                                        wprintf_s(L"%s: ExtractCallback failed with error %u\r\n", __FUNCTIONW__, extractResult);
+                                    }
                                 }
-                                else {
-                                    wprintf_s(L"%s: ExtractCallback failed with error %u\r\n", __FUNCTIONW__, extractResult);
-                                }
+                                LocalFree(pbBinary);
                             }
-                            LocalFree(pbBinary);
                         }
                     }
 
@@ -856,6 +840,11 @@ UINT ExtractImageChunksFromBuffer(
 
     *ExtractedChunks = 0;
 
+    if (BufferSize < sizeof(WORD)) {
+        wprintf_s(L"%s: Buffer too small (%lu bytes), skipping extraction\r\n", FunctionName, BufferSize);
+        return ERROR_INVALID_DATA;
+    }
+
     if (CreateDirectory(L"chunks", NULL) || GetLastError() == ERROR_ALREADY_EXISTS) {
         if (!SetCurrentDirectory(L"chunks")) {
             wprintf_s(L"%s: Failed to change directory to chunks folder\r\n", FunctionName);
@@ -881,7 +870,7 @@ UINT ExtractImageChunksFromBuffer(
         ULONG SizeOfImage;
         PBYTE CurrentPtr;
 
-        while (CurrentPosition < BufferSize - sizeof(WORD)) {
+        while (CurrentPosition <= BufferSize - sizeof(WORD)) {
             CurrentPtr = (PBYTE)RtlOffsetToPointer(Buffer, CurrentPosition);
 
             if ((*(PWORD)(CurrentPtr)) == 'ZM') {

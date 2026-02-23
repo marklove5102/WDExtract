@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2019 - 2025
+*  (C) COPYRIGHT AUTHORS, 2019 - 2026
 *
 *  TITLE:       WDEXTRACT.CPP
 *
-*  VERSION:     1.11
+*  VERSION:     1.12
 *
-*  DATE:        07 Aug 2025
+*  DATE:        20 Feb 2026
 *
 *  WDEXTRACT main logic and entrypoint.
 *
@@ -19,7 +19,10 @@
 
 #include "global.h"
 
-#define WDEXTRACT_VERSION           L"wdextract 1.11"
+#define WDEXTRACT_VERSION           L"wdextract 1.12"
+#define WDEXTRACT_COPYRIGHT         L"(c) 2019 - 2026 hfiref0x"
+#define SUFFIX_RMDX_CCH             6   // L".rmdx" + null
+#define SUFFIX_EXTRACTED_CCH        11  // L".extracted" + null
 
 /*
 * ExtractContainerOnly
@@ -56,7 +59,7 @@ UINT ExtractContainerOnly(
             break;
         }
 
-        FileNameLength += 6;
+        FileNameLength += SUFFIX_RMDX_CCH;
         OutputFileName = (LPWSTR)LocalAlloc(LMEM_ZEROINIT, FileNameLength * sizeof(WCHAR));
         if (OutputFileName == NULL) {
             Result = GetLastError();
@@ -68,7 +71,7 @@ UINT ExtractContainerOnly(
             break;
         }
 
-        OutputFileHandle = CreateFile(OutputFileName, GENERIC_WRITE | GENERIC_READ, 0, NULL, CREATE_ALWAYS, 0, NULL);;
+        OutputFileHandle = FileCreate(OutputFileName);
         if (OutputFileHandle == INVALID_HANDLE_VALUE) {
             Result = GetLastError();
             break;
@@ -168,7 +171,7 @@ UINT ExtractDataDll(
 
             ContainerHeader = (PRMDX_HEADER)Data;
 
-            IsCompressed = ((ContainerHeader->Options >> 1) & 0xff);
+            IsCompressed = (((ContainerHeader->Options >> 1) & 0xff) != 0);
             if (IsCompressed == FALSE) {
                 Result = ERROR_UNKNOWN_REVISION;
                 break;
@@ -189,7 +192,7 @@ UINT ExtractDataDll(
                 break;
             }
 
-            FileNameLength += 11;
+            FileNameLength += SUFFIX_EXTRACTED_CCH;
             NewFileName = (LPWSTR)LocalAlloc(LMEM_ZEROINIT, FileNameLength * sizeof(WCHAR));
             if (NewFileName == NULL) {
                 Result = GetLastError();
@@ -201,7 +204,7 @@ UINT ExtractDataDll(
                 break;
             }
 
-            OutputFileHandle = CreateFile(NewFileName, GENERIC_WRITE | GENERIC_READ, 0, NULL, CREATE_ALWAYS, 0, NULL);
+            OutputFileHandle = FileCreate(NewFileName);
             LocalFree(NewFileName);
             NewFileName = NULL;
 
@@ -248,6 +251,7 @@ UINT ExtractDataDll(
                 }
                 else {
                     wprintf_s(L"%s: Failed to allocate memory for extracted data\r\n", __FUNCTIONW__);
+                    Result = ERROR_NOT_ENOUGH_MEMORY;
                 }
             }
         } while (FALSE);
@@ -300,6 +304,12 @@ UINT ExtractDataEXE(
 
     ULONG Size = 0, ChunkLength, EntryLength, ContainerSize = 0;
 
+    ULONG ctr = 0;
+    DWORD totalBytesWritten = 0;
+
+    PBYTE ExtractedChunkData = NULL;
+    DWORD ExtractedChunkSize = 0;
+
     PBYTE DataPtr, DecodedBuffer = NULL;
     SIZE_T CurrentPosition, MaximumLength;
     PVOID Data;
@@ -327,7 +337,9 @@ UINT ExtractDataEXE(
         RtlSecureZeroMemory(szCurrentDirectory, sizeof(szCurrentDirectory));
         RtlSecureZeroMemory(szOriginalDirectory, sizeof(szOriginalDirectory));
 
-        GetCurrentDirectory(MAX_PATH, szCurrentDirectory);
+        if (GetCurrentDirectory(MAX_PATH, szCurrentDirectory) == 0) {
+            return GetLastError();
+        }
 
         StringCchCopy(szOriginalDirectory, MAX_PATH, szCurrentDirectory);
 
@@ -349,7 +361,7 @@ UINT ExtractDataEXE(
         GetTempPath(MAX_PATH, TempFileName);
         StringCchCat(TempFileName, MAX_PATH, TEXT("mrt_vdm.dll"));
 
-        tempFileHandle = CreateFile(TempFileName, GENERIC_WRITE | GENERIC_READ, 0, NULL, CREATE_ALWAYS, 0, NULL);
+        tempFileHandle = FileCreate(TempFileName);
         if (tempFileHandle == INVALID_HANDLE_VALUE) {
             return GetLastError();
         }
@@ -398,7 +410,7 @@ UINT ExtractDataEXE(
                 break;
             }
 
-            FileNameLength += 11;
+            FileNameLength += SUFFIX_EXTRACTED_CCH;
             NewFileName = (LPWSTR)LocalAlloc(LMEM_ZEROINIT, FileNameLength * sizeof(WCHAR));
             if (NewFileName == NULL) {
                 Result = GetLastError();
@@ -423,22 +435,6 @@ UINT ExtractDataEXE(
             CurrentPosition = ContainerHeader->DataOffset + sizeof(CDATA_HEADER);
 
             DataPtr = (PBYTE)RtlOffsetToPointer(DataHeader, sizeof(CDATA_HEADER));
-
-            ULONG ctr = 0;
-            DWORD totalBytesWritten = 0;
-
-            PBYTE ExtractedChunkData = NULL;
-            DWORD ExtractedChunkSize = 0;
-
-            if (ExtractImageChunks) {
-                ExtractedChunkSize = 10 * 1024 * 1024; // 10 MB initial buffer
-                ExtractedChunkData = (PBYTE)LocalAlloc(LMEM_ZEROINIT, ExtractedChunkSize);
-                if (!ExtractedChunkData) {
-                    Result = GetLastError();
-                    wprintf_s(L"%s: Failed to allocate memory for chunk buffer\r\n", __FUNCTIONW__);
-                    break;
-                }
-            }
 
             while (CurrentPosition < MaximumLength) {
                 if (CurrentPosition + sizeof(CHUNK_HEAD) > MaximumLength) {
@@ -472,23 +468,21 @@ UINT ExtractDataEXE(
                                 CurrentPosition,
                                 ChunkLength);
 
-                            if (ctr == 0) {
-                                RtlCopyMemory(ExtractedChunkData, DecodedBuffer, ChunkLength);
+                            PBYTE newBuffer = (PBYTE)LocalReAlloc(ExtractedChunkData,
+                                ExtractedChunkSize + ChunkLength,
+                                LMEM_ZEROINIT);
+                            if (newBuffer) {
+                                ExtractedChunkData = newBuffer;
+                                RtlCopyMemory(ExtractedChunkData + ExtractedChunkSize, DecodedBuffer, ChunkLength);
+                                ExtractedChunkSize += ChunkLength;
                                 ctr++;
                             }
                             else {
-
-                                PBYTE newBuffer = (PBYTE)LocalReAlloc(ExtractedChunkData,
-                                    ExtractedChunkSize + ChunkLength,
-                                    LMEM_MOVEABLE | LMEM_ZEROINIT);
-                                if (newBuffer) {
-                                    ExtractedChunkData = newBuffer;
-                                    RtlCopyMemory(ExtractedChunkData + ExtractedChunkSize, DecodedBuffer, ChunkLength);
-                                    ExtractedChunkSize += ChunkLength;
-                                    ctr++;
-                                }
-                                else {
-                                    wprintf_s(L"%s: Failed to reallocate chunk buffer\r\n", __FUNCTIONW__);
+                                wprintf_s(L"%s: Failed to reallocate chunk buffer\r\n", __FUNCTIONW__);
+                                if (ExtractedChunkData) {
+                                    LocalFree(ExtractedChunkData);
+                                    ExtractedChunkData = NULL;
+                                    ExtractedChunkSize = 0;
                                 }
                             }
                         }
@@ -527,9 +521,7 @@ UINT ExtractDataEXE(
 
         } while (FALSE);
 
-        if (tempFileHandle) {
-            if (tempFileHandle != INVALID_HANDLE_VALUE) CloseHandle(tempFileHandle);
-        }
+        if (tempFileHandle != INVALID_HANDLE_VALUE) CloseHandle(tempFileHandle);
         if (ExtractedModule) FreeLibrary(ExtractedModule);
         if (NewFileName) LocalFree(NewFileName);
         if (DecodedBuffer) LocalFree(DecodedBuffer);
@@ -672,7 +664,7 @@ UINT MergeDeltaFiles(
 
             DWORD index = 0;
 
-            PCSIG_ENTRY deltaBlobEntry = (PCSIG_ENTRY)GetDeltaBlobSig(DeltaBuffer);
+            PCSIG_ENTRY deltaBlobEntry = (PCSIG_ENTRY)GetDeltaBlobSig(DeltaBuffer, DeltaFileSize);
             if (!deltaBlobEntry) {
                 Result = ERROR_INVALID_DATA;
                 wprintf_s(L"%s: Failed to locate delta blob signature\r\n", __FUNCTIONW__);
@@ -838,78 +830,83 @@ void ExtractDataCommand(
     WCHAR szTotalMsg[240];
 
     PVOID ImageBase = MapContainerFile(FileName);
-    if (ImageBase) {
-        NtHeaders = ImageNtHeader(ImageBase);
+    if (ImageBase == NULL) {
+        ShowWin32Error(GetLastError(), __FUNCTIONW__);
+        return;
+    }
 
-        //
-        // Rough check if this is MRT.
-        //
-        if (NtHeaders->FileHeader.Characteristics & IMAGE_FILE_DLL) {
-            if (ExtractContainerOnly) {
-                wprintf_s(L"ExtractDataDll: Attempt to extract raw RMDX data from VDM container\r\n");
-            }
-            else {
-                wprintf_s(L"ExtractDataDll: Attempt to unpack VDM container\r\n");
-            }
+    NtHeaders = ImageNtHeader(ImageBase);
+    if (NtHeaders == NULL) {
+        ShowWin32Error(ERROR_BAD_EXE_FORMAT, __FUNCTIONW__);
+        UnmapViewOfFile(ImageBase);
+        return;
+    }
 
-            Result = ExtractDataDll(FileName,
-                ImageBase,
-                &TotalBytesWritten,
-                &TotalBytesRead,
-                ExtractImageChunks,
-                &NumberOfImageChunks,
-                ExtractContainerOnly);
-
+    //
+    // Rough check if this is MRT.
+    //
+    if (NtHeaders->FileHeader.Characteristics & IMAGE_FILE_DLL) {
+        if (ExtractContainerOnly) {
+            wprintf_s(L"ExtractDataDll: Attempt to extract raw RMDX data from VDM container\r\n");
         }
         else {
-            if (ExtractContainerOnly) {
-                wprintf_s(L"ExtractDataEXE: Attempt to extract raw RMDX data from MRT container\r\n");
-            }
-            else {
-                wprintf_s(L"ExtractDataEXE: Attempt to extract and decrypt MRT container\r\n");
-            }
-
-            Result = ExtractDataEXE(FileName,
-                ImageBase,
-                &TotalBytesWritten,
-                &TotalBytesRead,
-                ExtractImageChunks,
-                &NumberOfImageChunks,
-                ExtractContainerOnly);
-
+            wprintf_s(L"ExtractDataDll: Attempt to unpack VDM container\r\n");
         }
 
-        if (Result == ERROR_SUCCESS && !ExtractContainerOnly) {
-            if (ExtractImageChunks) {
-                StringCbPrintf(szTotalMsg,
-                    _countof(szTotalMsg),
-                    L"\r\nStats: \r\nRead bytes = %lu (%lu KB)\r\nWritten bytes = %lu (%lu KB)\r\nImage chunks = %lu",
-                    TotalBytesRead,
-                    TotalBytesRead / 1024,
-                    TotalBytesWritten,
-                    TotalBytesWritten / 1024,
-                    NumberOfImageChunks);
-            }
-            else {
-                StringCbPrintf(szTotalMsg,
-                    _countof(szTotalMsg),
-                    L"\r\nStats: \r\nRead bytes = %lu (%lu KB)\r\nWritten bytes = %lu (%lu KB)",
-                    TotalBytesRead,
-                    TotalBytesRead / 1024,
-                    TotalBytesWritten,
-                    TotalBytesWritten / 1024);
-            }
-            wprintf_s(L"%s", szTotalMsg);
-        }
-        else if (Result != ERROR_SUCCESS) {
-            ShowWin32Error(Result, __FUNCTIONW__);
-        }
+        Result = ExtractDataDll(FileName,
+            ImageBase,
+            &TotalBytesWritten,
+            &TotalBytesRead,
+            ExtractImageChunks,
+            &NumberOfImageChunks,
+            ExtractContainerOnly);
 
-        UnmapViewOfFile(ImageBase);
     }
     else {
-        ShowWin32Error(GetLastError(), __FUNCTIONW__);
+        if (ExtractContainerOnly) {
+            wprintf_s(L"ExtractDataEXE: Attempt to extract raw RMDX data from MRT container\r\n");
+        }
+        else {
+            wprintf_s(L"ExtractDataEXE: Attempt to extract and decrypt MRT container\r\n");
+        }
+
+        Result = ExtractDataEXE(FileName,
+            ImageBase,
+            &TotalBytesWritten,
+            &TotalBytesRead,
+            ExtractImageChunks,
+            &NumberOfImageChunks,
+            ExtractContainerOnly);
+
     }
+
+    if (Result == ERROR_SUCCESS && !ExtractContainerOnly) {
+        if (ExtractImageChunks) {
+            StringCbPrintf(szTotalMsg,
+                _countof(szTotalMsg),
+                L"\r\nStats: \r\nRead bytes = %lu (%lu KB)\r\nWritten bytes = %lu (%lu KB)\r\nImage chunks = %lu",
+                TotalBytesRead,
+                TotalBytesRead / 1024,
+                TotalBytesWritten,
+                TotalBytesWritten / 1024,
+                NumberOfImageChunks);
+        }
+        else {
+            StringCbPrintf(szTotalMsg,
+                _countof(szTotalMsg),
+                L"\r\nStats: \r\nRead bytes = %lu (%lu KB)\r\nWritten bytes = %lu (%lu KB)",
+                TotalBytesRead,
+                TotalBytesRead / 1024,
+                TotalBytesWritten,
+                TotalBytesWritten / 1024);
+        }
+        wprintf_s(L"%s", szTotalMsg);
+    }
+    else if (Result != ERROR_SUCCESS) {
+        ShowWin32Error(Result, __FUNCTIONW__);
+    }
+
+    UnmapViewOfFile(ImageBase);
 }
 
 /*
@@ -981,7 +978,7 @@ int __cdecl main()
 
     HeapSetInformation(NULL, HeapEnableTerminationOnCorruption, NULL, 0);
 
-    wprintf_s(L"%s build at %s (c) 2019 - 2025 hfiref0x\r\n", WDEXTRACT_VERSION, TEXT(__DATE__));
+    wprintf_s(L"%s build at %s %s\r\n", WDEXTRACT_VERSION, TEXT(__DATE__), WDEXTRACT_COPYRIGHT);
 
     __try {
         szArglist = CommandLineToArgvW(GetCommandLineW(), &nArgs);
