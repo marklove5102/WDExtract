@@ -1,0 +1,70 @@
+name: Build WDExtract
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+env:
+  BUILD_CONFIGURATION: Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Build wdextract x86
+        working-directory: ./Source
+        run: msbuild wdextract.sln /m /p:Platform=x86 /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:PlatformToolset=v143
+
+      - name: Build wdextract x64
+        working-directory: ./Source
+        run: msbuild wdextract.sln /m /p:Platform=x64 /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:PlatformToolset=v143
+
+      - name: Collect snapshot files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path Package\Application\bin32 | Out-Null
+          New-Item -ItemType Directory -Force -Path Package\Application\bin64 | Out-Null
+
+          $x86Exe = "Source\wdextract\output\Win32\${{ env.BUILD_CONFIGURATION }}\wdextract32.exe"
+          $x64Exe = "Source\wdextract\output\x64\${{ env.BUILD_CONFIGURATION }}\wdextract64.exe"
+
+          $x86Dll = "Source\wdextract\zlib\dll_x86\zlibwapi.dll"
+          $x64Dll = "Source\wdextract\zlib\dll_x64\zlibwapi.dll"
+
+          if (!(Test-Path $x86Exe)) {
+            throw "wdextract32.exe not found at $x86Exe"
+          }
+
+          if (!(Test-Path $x64Exe)) {
+            throw "wdextract64.exe not found at $x64Exe"
+          }
+
+          if (!(Test-Path $x86Dll)) {
+            throw "zlibwapi.dll not found at $x86Dll"
+          }
+
+          if (!(Test-Path $x64Dll)) {
+            throw "zlibwapi.dll not found at $x64Dll"
+          }
+
+          Copy-Item $x86Exe "Package\Application\bin32\wdextract32.exe" -Force
+          Copy-Item $x86Dll "Package\Application\bin32\zlibwapi.dll" -Force
+
+          Copy-Item $x64Exe "Package\Application\bin64\wdextract64.exe" -Force
+          Copy-Item $x64Dll "Package\Application\bin64\zlibwapi.dll" -Force
+
+      - name: Upload wdextract snapshot
+        uses: actions/upload-artifact@v6
+        with:
+          name: wdextract_snapshot.zip
+          path: Package\Application\*
